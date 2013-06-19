@@ -17,60 +17,63 @@
 #include <limits.h>
 #include <math.h>
 
+#define VERSION_MAJOR 0
+#define VERSION_MINOR 1
+
 #define MAX_FIELDS   (CHAR_BIT*sizeof (uint64_t))
 #define MAX_FILES    2048
 
-char *_program     = NULL;
-int   _quiet       = 0;
-int   _totals_only = 0;
+char		*program	  = NULL;
+int		 quiet		  = 0;
+int		 totals_only	  = 0;
 
-char *_separator                   = ",";
+char		*separator        = ",";
 
-uint64_t _include = 0xFFFFFFFFFFFFFFFFULL;
+uint64_t	 include	  = 0xFFFFFFFFFFFFFFFFULL;
 
-long  _file_totals[MAX_FIELDS] = { 0, 0, 0 };
-long  _totals[MAX_FIELDS]      = { 0, 0, 0 };
+long  file_totals[MAX_FIELDS]	  = { 0 };
+long  totals[MAX_FIELDS]	  = { 0 };
 
-char *_fields[MAX_FIELDS]      = { NULL, NULL, NULL };
-int   _last_field_seen = 0;
+char *fields[MAX_FIELDS]	  = { NULL };
+int		 last_field_seen  = 0;
 
-int   _filename_count = 0;
-char *_filenames[MAX_FILES] = { NULL, NULL, NULL };
+int		 filename_count	  = 0;
+char *filenames[MAX_FILES]	  = { NULL };
 
-int   _separator_length = 1;
-int   _header = 0;
+int		 separator_length = 1;
+int		 header		  = 0;
 
 int split(char *line) {
     char *start = line;
     char *sep = NULL;
     int   index = 0;
 
-    if (_separator_length == 1) {
-        while (*start && (sep = strchr(start, *_separator)) != NULL) {
+    if (separator_length == 1) {
+        while (*start && (sep = strchr(start, *separator)) != NULL) {
             *sep = '\0';
-            _fields[index++] = start;
+            fields[index++] = start;
             start = sep + 1;
         }
     } else {
-        while (*start && (sep = strstr(start, _separator)) != NULL) {
+        while (*start && (sep = strstr(start, separator)) != NULL) {
             *sep = '\0';
-            _fields[index++] = start;
-            start = sep + _separator_length - 1;
+            fields[index++] = start;
+            start = sep + separator_length - 1;
         }
     }
 
     if (start && *start) {
-        _fields[index++] = start;
+        fields[index++] = start;
     }
 
     return index;
 }
 
-#define SETFIELD(x) (_include |= (1ULL << (x))) 
+#define SETFIELD(x) (include |= (1ULL << (x))) 
 #if 0
-{ unsigned __x = (x); printf("Setting field %d: 0x%016llux\n", __x, (1ULL << __x)); _include |= (1ULL << (x)); }
+{ unsigned __x = (x); printf("Setting field %d: 0x%016llux\n", __x, (1ULL << __x)); include |= (1ULL << (x)); }
 #endif /* 0 */
-#define GETFIELD(x) ((_include&(1ULL << (x))) > 0 ? 1 : 0)
+#define GETFIELD(x) ((include&(1ULL << (x))) > 0 ? 1 : 0)
 
 void include_range(int start, int end) {
     /* fprintf(stderr, "Including range [%d,%d]\n", start, end); */
@@ -89,7 +92,7 @@ void include_range(int start, int end) {
 }
 
 void usage_and_exit(int code) {
-    fprintf(stderr, "Usage %s [OPTIONS] [FILE]\n", _program);
+    fprintf(stderr, "Usage %s [OPTIONS] [FILE]\n", program);
     fprintf(stderr, 
             "Where OPTIONS includes:\n"
             "\n"
@@ -105,20 +108,20 @@ void usage_and_exit(int code) {
             "  -f 1- -s \"%s\"\n"
             "\n"
             "If FILE is left off, stdin is read.\n",
-            _separator);
+            separator);
             
     exit(code);
 }
 
-int _long_option = 0;
+int long_option = 0;
 struct option opts[] = {
-    { "help",          0, &_long_option, 'h' },
-    { "version",       0, &_long_option, 'v' },
-    { "separator",     1, &_long_option, 's' },
-    { "field",         1, &_long_option, 'f' },
-    { "totals",        0, &_long_option, 't' },
-    { "header",        0, &_long_option, 'H' },
-    { "quiet",         0, &_long_option, 'q' },
+    { "help",          0, &long_option, 'h' },
+    { "version",       0, &long_option, 'v' },
+    { "separator",     1, &long_option, 's' },
+    { "field",         1, &long_option, 'f' },
+    { "totals",        0, &long_option, 't' },
+    { "header",        0, &long_option, 'H' },
+    { "quiet",         0, &long_option, 'q' },
 };
 #define OPTS "hvs:f:qtH"
 
@@ -197,34 +200,38 @@ void parse_fields(char *list) {
 #endif /* 0 */
 }
 
+void version(void) {
+    printf("%s %d.%d\n", program, VERSION_MAJOR, VERSION_MINOR);
+    exit(EXIT_SUCCESS);
+}
+
 void parse_opts(int argc, char *argv[]) {
     int opt_ind = 0;
     int c;
     while ((c = getopt_long(argc, argv, OPTS, opts, &opt_ind)) != -1) {
-        if (c == 0) c = _long_option;
+        if (c == 0) c = long_option;
         switch (c) {
             case 'h':
                 usage_and_exit(EXIT_SUCCESS);
             case 'v':
-                printf("Version something or other.\n");
-                exit(EXIT_SUCCESS);
+                version();
             case 'f':
-                _include = 0ULL;
+                include = 0ULL;
                 parse_fields(optarg);
-                /* printf("Fields: 0x%016lux\n", _include); */
+                /* printf("Fields: 0x%016lux\n", include); */
                 break;
             case 's':
-                _separator = strdup(optarg);
-                _separator_length = strlen(_separator);
+                separator = strdup(optarg);
+                separator_length = strlen(separator);
                 break;
             case 't':
-                _totals_only = 1;
+                totals_only = 1;
                 break;
             case 'H':
-                _header = 1;
+                header = 1;
                 break;
             case 'q':
-                _quiet = 1;
+                quiet = 1;
                 break;
             case '?':
             default:
@@ -234,7 +241,7 @@ void parse_opts(int argc, char *argv[]) {
 
     while (optind < argc) {
         if (*argv[optind] != '-') {
-            _filenames[_filename_count++] = strdup(argv[optind]);
+            filenames[filename_count++] = strdup(argv[optind]);
         }
         optind++;
     }
@@ -244,14 +251,14 @@ void total_line(char *line) {
     int fcount = split(line);
     int i, index = 0;
 
-    _last_field_seen = (_last_field_seen > fcount ? _last_field_seen : fcount);
+    last_field_seen = (last_field_seen > fcount ? last_field_seen : fcount);
 
     for (i = 0; i < fcount; i++) {
         if (GETFIELD(i) > 0) {
-            long val = atol(_fields[i]);
+            long val = atol(fields[i]);
             /* printf("%d += %ld\n", index, val); */
-            _file_totals[index] += val;
-            _totals[index] += val;
+            file_totals[index] += val;
+            totals[index] += val;
             
             index++;
         }
@@ -260,17 +267,17 @@ void total_line(char *line) {
 
 void print_totals(char *header, long tots[]) {
     int i, index = 0;
-    if (header && _header) {
+    if (header && header) {
         printf("%s: ", header);
     }
 
-    for (i = 0; i < _last_field_seen; i++) {
+    for (i = 0; i < last_field_seen; i++) {
         if (GETFIELD(i) > 0) {
             printf("%s%ld", (index > 0 ? " " : ""), tots[index]);
             index++;
         }
     }
-    if (_last_field_seen > 0) printf("\n");
+    if (last_field_seen > 0) printf("\n");
 }
 
 int total_file(char *fname, FILE *in) {
@@ -278,7 +285,7 @@ int total_file(char *fname, FILE *in) {
     size_t   len;
     ssize_t  read;
 
-    memset(_file_totals, 0, MAX_FIELDS*sizeof (long));
+    memset(file_totals, 0, MAX_FIELDS*sizeof (long));
 
     while ((read = getline(&line, &len, in)) != -1) {
         if (read > 0) {
@@ -290,8 +297,8 @@ int total_file(char *fname, FILE *in) {
 
     if (line) free(line);
 
-    if (!_totals_only) {
-        print_totals(fname, _file_totals);
+    if (!totals_only) {
+        print_totals(fname, file_totals);
     }
 
     return 0;
@@ -299,20 +306,20 @@ int total_file(char *fname, FILE *in) {
 
 int total(void) {
     int i;
-    memset(_totals, 0, MAX_FIELDS*sizeof (long));
-    if (_filename_count == 0) {
+    memset(totals, 0, MAX_FIELDS*sizeof (long));
+    if (filename_count == 0) {
         /* stdin */
         total_file("<stdin>", stdin);
     } else {
-        for (i = 0; i < _filename_count; i++) {
+        for (i = 0; i < filename_count; i++) {
 
-            FILE *in = fopen(_filenames[i], "rm");
+            FILE *in = fopen(filenames[i], "rm");
 
             if (in != NULL) {
-                total_file(_filenames[i], in);
+                total_file(filenames[i], in);
             } else {
-                if (!_quiet) {
-                    fprintf(stderr, "Unable to open file `%s': %s\n", _filenames[i], strerror(errno));
+                if (!quiet) {
+                    fprintf(stderr, "Unable to open file `%s': %s\n", filenames[i], strerror(errno));
                 }
 		return 1;
             }
@@ -323,7 +330,7 @@ int total(void) {
 }
 
 int main(int argc, char *argv[]) {
-    _program = basename(argv[0]);
+    program = basename(argv[0]);
     parse_opts(argc, argv);
 
     int err = 0;
@@ -332,7 +339,7 @@ int main(int argc, char *argv[]) {
         return err;
     }
 
-    if (_filename_count > 1) print_totals("Totals", _totals);
+    if (filename_count > 1) print_totals("Totals", totals);
     return 0;
 }
 
