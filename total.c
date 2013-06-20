@@ -1,21 +1,28 @@
-/*
- * total.c
+/**
+ * -*- coding: utf-8; -*-
  *
- * Total a field (column) in a file.
+ * @file total/total.c
  *
- * Copyright (c) 2000 Chris Kirkwood-Watts <kirkwood@acm.org>
+ * Copyright © 2008-2013 Totzeit, Inc.
+ *
+ * This work is licensed under
+ *
+ *     Creative Commons Attribution 3.0 Unported License (CC BY 3.0)
+ *
+ * the full text of which may be retrieved at
+ *
+ *     http://creativecommons.org/licenses/by/3.0/
  *
  */
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <libgen.h>
 #include <getopt.h>
 #include <string.h>
 #include <errno.h>
-#include <ctype.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <limits.h>
-#include <math.h>
 
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 1
@@ -23,25 +30,33 @@
 #define MAX_FIELDS   (CHAR_BIT*sizeof (uint64_t))
 #define MAX_FILES    2048
 
-char		*program	  = NULL;
-int		 quiet		  = 0;
-int		 totals_only	  = 0;
+typedef union {
+    int64_t  i;
+    double   f;
+} value_t;
 
-char		*separator        = ",";
+char     *program          = NULL;
+int       quiet            = false;
+int       totals_only      = false;
+bool      horizontal       = false;
+bool      doubles          = false;
 
-uint64_t	 include	  = 0xFFFFFFFFFFFFFFFFULL;
+char     *separator        = ",";
+char     *output_separator = NULL;
 
-long  file_totals[MAX_FIELDS]	  = { 0 };
-long  totals[MAX_FIELDS]	  = { 0 };
+uint64_t  include          = 0xFFFFFFFFFFFFFFFFULL;
 
-char *fields[MAX_FIELDS]	  = { NULL };
-int		 last_field_seen  = 0;
+value_t   file_totals[MAX_FIELDS];
+value_t   totals[MAX_FIELDS];
 
-int		 filename_count	  = 0;
-char *filenames[MAX_FILES]	  = { NULL };
+char     *fields[MAX_FIELDS];
+int       last_field_seen  = 0;
 
-int		 separator_length = 1;
-int		 header		  = 0;
+int       filename_count   = 0;
+char     *filenames[MAX_FILES];
+
+int       separator_length = 1;
+bool      show_header      = false;
 
 int split(char *line) {
     char *start = line;
@@ -96,10 +111,14 @@ void usage_and_exit(int code) {
     fprintf(stderr, 
             "Where OPTIONS includes:\n"
             "\n"
-            "-s | --separator <separator>      Fields separated by <separator>\n"
+            "-s | --separator <sep>            Assume input fields separated by <sep>\n"
+            "-S | --output-separator <sep>     Output separated by <sep>\n"
             "-f | --field <num>[,<num>]        Total field(s) <num>[,<num>]\n"
             "-t | --totals-only                Only print grant totals\n"
+            "-z | --horizontal                 Total lines horizontally\n"
+            "-d | --doubles                    Assume values are floating point\n"
             "-q | --quiet                      Ignore errors\n"
+            "-H | --header                     Print column headers\n"
             "-h | --help                       You're soaking in it\n"
             "-v | --version                    Probably idempotent\n"
             "\n"
@@ -107,7 +126,10 @@ void usage_and_exit(int code) {
             "\n"
             "  -f 1- -s \"%s\"\n"
             "\n"
-            "If FILE is left off, stdin is read.\n",
+            "with the output separator the same as the input separator.\n"
+            "\n"
+            "If FILE is left off, stdin is read. Note that in the presence of -z,\n"
+            "options -t and -H are ignored.\n",
             separator);
             
     exit(code);
@@ -115,22 +137,25 @@ void usage_and_exit(int code) {
 
 int long_option = 0;
 struct option opts[] = {
-    { "help",          0, &long_option, 'h' },
-    { "version",       0, &long_option, 'v' },
-    { "separator",     1, &long_option, 's' },
-    { "field",         1, &long_option, 'f' },
-    { "totals",        0, &long_option, 't' },
-    { "header",        0, &long_option, 'H' },
-    { "quiet",         0, &long_option, 'q' },
+    { "help",              0, &long_option, 'h' },
+    { "version",           0, &long_option, 'v' },
+    { "separator",         1, &long_option, 's' },
+    { "output-separator",  1, &long_option, 'S' },
+    { "field",             1, &long_option, 'f' },
+    { "totals",            0, &long_option, 't' },
+    { "horizontal",        0, &long_option, 'z' },
+    { "doubles",           0, &long_option, 'd' },
+    { "header",            0, &long_option, 'H' },
+    { "quiet",             0, &long_option, 'q' },
 };
-#define OPTS "hvs:f:qtH"
+#define OPTS "hvs:S:f:qtzdH"
 
 void parse_fields(char *list) {
     char *start = list;
     char *end   = NULL;
 
     long start_index = -1;
-    int  in_range    = 0;
+    bool in_range    = false;
  
     for (;;) {
         switch (*start) {
@@ -154,7 +179,7 @@ void parse_fields(char *list) {
 
                 if (in_range) {
                     include_range(start_index, n);
-                    in_range = 0;
+                    in_range = false;
                     start_index = -1;
                 } else {
                     start_index = n;
@@ -165,7 +190,7 @@ void parse_fields(char *list) {
 
             case '-':
                 start++;
-                in_range = 1;
+                in_range = true;
                 break;
 
             case '\0':
@@ -176,28 +201,14 @@ void parse_fields(char *list) {
                     if (start_index >= 0) SETFIELD(start_index);
                 }
                 start_index = -1;
-                in_range = 0;
+                in_range = false;
                 if (*start == '\0') return;
                 start++;
                 break;
             default:
                 usage_and_exit(1);
         }
-    };
-
-#if 0
- parse_out:
-
-    int i, count = 0;
-    fprintf(stderr, "Fields:");
-    for (i = 0; i < MAX_FIELDS; i++) {
-        if (GETFIELD(i)) {
-            fprintf(stderr, "%s%d", ((count > 0) ? ", " : " "), i + 1);
-            count++;
-        }
     }
-    fprintf(stderr, "\n");
-#endif /* 0 */
 }
 
 void version(void) {
@@ -218,26 +229,36 @@ void parse_opts(int argc, char *argv[]) {
             case 'f':
                 include = 0ULL;
                 parse_fields(optarg);
-                /* printf("Fields: 0x%016lux\n", include); */
                 break;
             case 's':
                 separator = strdup(optarg);
                 separator_length = strlen(separator);
                 break;
+            case 'S':
+                output_separator = strdup(optarg);
+                break;
             case 't':
-                totals_only = 1;
+                totals_only = true;
+                break;
+            case 'z':
+                horizontal = true;
+                break;
+            case 'd':
+                doubles = true;
                 break;
             case 'H':
-                header = 1;
+                show_header = true;
                 break;
             case 'q':
-                quiet = 1;
+                quiet = true;
                 break;
             case '?':
             default:
                 usage_and_exit(EXIT_FAILURE);
         }
     }
+
+    output_separator = output_separator ? output_separator : separator;
 
     while (optind < argc) {
         if (*argv[optind] != '-') {
@@ -253,31 +274,64 @@ void total_line(char *line) {
 
     last_field_seen = (last_field_seen > fcount ? last_field_seen : fcount);
 
+    if (horizontal) {
+        if (doubles) {
+            totals[0].f = 0.0;
+        } else {
+            totals[0].i = 0;
+        }
+    }
+
     for (i = 0; i < fcount; i++) {
         if (GETFIELD(i) > 0) {
-            long val = atol(fields[i]);
-            /* printf("%d += %ld\n", index, val); */
-            file_totals[index] += val;
-            totals[index] += val;
-            
+            if (doubles) {
+                double v = strtod(fields[i], NULL);
+                if (!horizontal) {
+                    file_totals[index].f += v;
+                } else {
+                    totals[0].f += v;
+                }
+            } else {
+                int64_t v = strtol(fields[i], NULL, 0);
+                if (!horizontal) {
+                    file_totals[index].i += v;
+                } else {
+                    totals[0].i += v;
+                }
+            }
             index++;
+        }
+    }
+
+    if (horizontal) {
+        if (doubles) {
+            printf("%lf\n", totals[0].f);
+        } else {
+            printf("%ld\n", totals[0].i);
         }
     }
 }
 
-void print_totals(char *header, long tots[]) {
+void print_totals(char *header, value_t tots[]) {
     int i, index = 0;
-    if (header && header) {
+    if (show_header && header) {
         printf("%s: ", header);
     }
 
     for (i = 0; i < last_field_seen; i++) {
         if (GETFIELD(i) > 0) {
-            printf("%s%ld", (index > 0 ? " " : ""), tots[index]);
+            if (doubles) {
+                printf("%s%lf", (index > 0 ? output_separator : ""), tots[index].f);
+            } else {
+                printf("%s%ld", (index > 0 ? output_separator : ""), tots[index].i);
+            }
             index++;
         }
     }
-    if (last_field_seen > 0) printf("\n");
+
+    if (last_field_seen > 0) {
+        printf("\n");
+    }
 }
 
 int total_file(char *fname, FILE *in) {
@@ -285,7 +339,11 @@ int total_file(char *fname, FILE *in) {
     size_t   len;
     ssize_t  read;
 
-    memset(file_totals, 0, MAX_FIELDS*sizeof (long));
+    if (doubles) {
+        memset(file_totals, 0, MAX_FIELDS*sizeof (double));
+    } else {
+        memset(file_totals, 0, MAX_FIELDS*sizeof (int64_t));
+    }
 
     while ((read = getline(&line, &len, in)) != -1) {
         if (read > 0) {
@@ -297,7 +355,7 @@ int total_file(char *fname, FILE *in) {
 
     if (line) free(line);
 
-    if (!totals_only) {
+    if (!totals_only && !horizontal) {
         print_totals(fname, file_totals);
     }
 
@@ -306,7 +364,7 @@ int total_file(char *fname, FILE *in) {
 
 int total(void) {
     int i;
-    memset(totals, 0, MAX_FIELDS*sizeof (long));
+
     if (filename_count == 0) {
         /* stdin */
         total_file("<stdin>", stdin);
@@ -321,7 +379,7 @@ int total(void) {
                 if (!quiet) {
                     fprintf(stderr, "Unable to open file `%s': %s\n", filenames[i], strerror(errno));
                 }
-		return 1;
+                return 1;
             }
         }
     }
@@ -339,7 +397,17 @@ int main(int argc, char *argv[]) {
         return err;
     }
 
-    if (filename_count > 1) print_totals("Totals", totals);
+    if (filename_count > 1 && !horizontal) {
+        print_totals("Totals", totals);
+    }
+
     return 0;
 }
 
+/**
+ * Local Variables:
+ * indent-tabs-mode: nil
+ * fill-column: 79
+ * comment-column: 37
+ * End:
+ */
