@@ -1,7 +1,7 @@
 total
 =====
 
-Simple command-line totaler. It adds numbers.
+Simple command-line summation tool. It adds numbers either column- or row-wise.
 
 ```
 Usage total [OPTIONS] [FILE]
